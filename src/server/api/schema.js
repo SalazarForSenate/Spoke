@@ -49,6 +49,10 @@ import {
 } from './canned-response'
 import { schema as inviteSchema, resolvers as inviteResolvers } from './invite'
 import {
+  schema as osdiListSchema
+} from './osdi-list'
+import { schema as osdiQuestionsSchema } from './osdi-questions'
+import {
   authRequired,
   accessRequired,
   hasRole,
@@ -110,6 +114,9 @@ const rootSchema = `
     answerActions: String
     parentInteractionId: String
     isDeleted: Boolean
+    source: String
+    externalQuestion: String
+    externalResponse: String
     interactionSteps: [InteractionStepInput]
   }
 
@@ -164,7 +171,7 @@ const rootSchema = `
     message: MessageInput!
     campaignContactId: String!
   }
-  
+
   input OffsetLimitCursor {
     offset: Int!
     limit: Int!
@@ -190,7 +197,7 @@ const rootSchema = `
   type FoundContact {
     found: Boolean
   }
-  
+
   type PageInfo {
     limit: Int!
     offset: Int!
@@ -224,6 +231,7 @@ const rootSchema = `
     editUser(organizationId: String!, userId: Int!, userData:UserInput): User
     updateTextingHours( organizationId: String!, textingHoursStart: Int!, textingHoursEnd: Int!): Organization
     updateTextingHoursEnforcement( organizationId: String!, textingHoursEnforced: Boolean!): Organization
+    updateOrganizationFeatures( organizationId: String!, osdiEnabled: Boolean, osdiApiUrl: String, osdiApiToken: String ) : Organization
     bulkSendMessages(assignmentId: Int!): [CampaignContact]
     sendMessage(message:MessageInput!, campaignContactId:String!): CampaignContact,
     createOptOut(optOut:OptOutInput!, campaignContactId:String!):CampaignContact,
@@ -405,9 +413,11 @@ async function updateInteractionSteps(
           answer_option: is.answerOption,
           answer_actions: is.answerActions,
           campaign_id: campaignId,
-          is_deleted: false
-        })
-        .returning('id')
+          is_deleted: false,
+          source: is.source,
+          external_question: is.externalQuestion,
+          external_response: is.externalResponse
+        }).returning('id')
       idMap[is.id] = newId[0]
     } else {
       if (!origCampaignRecord.is_started && is.isDeleted) {
@@ -424,7 +434,11 @@ async function updateInteractionSteps(
             script: is.script,
             answer_option: is.answerOption,
             answer_actions: is.answerActions,
-            is_deleted: is.isDeleted
+            is_deleted: is.isDeleted,
+            source: is.source,
+            external_question: is.externalQuestion,
+            external_response: is.externalResponse
+            // TODO verify that interaction steps correctly update themselves in the DB
           })
       }
     }
@@ -661,6 +675,31 @@ const rootMutations = {
       await Organization.get(organizationId).update({
         texting_hours_enforced: textingHoursEnforced
       })
+
+      return await Organization.get(organizationId)
+    },
+    updateOrganizationFeatures: async(_, { organizationId, osdiEnabled, osdiApiUrl, osdiApiToken }, { user }) => {
+      await accessRequired(user, organizationId, 'ADMIN')
+
+      const org = await Organization.get(organizationId)
+      const updates = { osdiEnabled, osdiApiUrl, osdiApiToken }
+      Object.keys(updates).forEach(key => {
+        if (updates[key] === undefined) {
+          delete updates[key]
+        }
+      })
+
+      let features
+      try {
+        const existing_features = JSON.parse(org.features)
+        features = Object.assign(existing_features, updates)
+      } catch (ex) {
+        features = updates
+      }
+
+      await Organization
+        .get(organizationId)
+        .update({ features })
 
       return await Organization.get(organizationId)
     },
@@ -1355,29 +1394,31 @@ const rootResolvers = {
       await superAdminRequired(user)
       return r.table('organization')
     },
-    availableActions: (_, { organizationId }, { user }) => {
+    availableActions: async(_, { organizationId }, { user }) => {
       if (!process.env.ACTION_HANDLERS) {
         return []
       }
       const allHandlers = process.env.ACTION_HANDLERS.split(',')
-
-      const availableHandlers = allHandlers
-        .map(handler => {
-          return {
-            name: handler,
-            handler: require(`../action_handlers/${handler}.js`)
+      const availableHandlers = []
+      for (let i = 0; i < allHandlers.length; i++) {
+        const name = allHandlers[i]
+        try {
+          const handler = require(`../action_handlers/${name}.js`)
+          const isAvailable = await handler.available(organizationId)
+          console.log('action handler', name, `is ${!isAvailable ? 'un' : ''}available`)
+          if (isAvailable) {
+            availableHandlers.push({
+              name,
+              display_name: handler.displayName(),
+              instructions: handler.instructions()
+            })
           }
-        })
-        .filter(async h => h && (await h.handler.available(organizationId)))
-
-      const availableHandlerObjects = availableHandlers.map(handler => {
-        return {
-          name: handler.name,
-          display_name: handler.handler.displayName(),
-          instructions: handler.handler.instructions()
+        } catch (e) {
+          console.error(`Error processing action handler ${name}. This could be because the ACTION_HANDLERS env was set incorrectly and a module could not be loaded.`, e)
+          continue
         }
-      })
-      return availableHandlerObjects
+      }
+      return availableHandlers
     },
     conversations: async (
       _,
@@ -1452,6 +1493,8 @@ export const schema = [
   questionResponseSchema,
   questionSchema,
   inviteSchema,
+  osdiListSchema,
+  osdiQuestionsSchema,
   conversationSchema
 ]
 

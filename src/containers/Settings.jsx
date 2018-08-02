@@ -50,10 +50,48 @@ class Settings extends React.Component {
     this.handleCloseTextingHoursDialog()
   }
 
+  handleUpdateOrganizationFeatures = async newOSDIOptions => {
+    await this.props.mutations.updateOrganizationFeatures(newOSDIOptions)
+    this.props.data.refetch()
+  }
+
   handleOpenTextingHoursDialog = () => this.setState({ textingHoursDialogOpen: true })
 
   handleCloseTextingHoursDialog = () => this.setState({ textingHoursDialogOpen: false })
 
+  renderOSDIOptionsForm() {
+    const osdiFormSchema = yup.object({
+      osdiApiUrl: yup.string().required(),
+      osdiApiToken: yup.string().required()
+    })
+
+    return (
+      <GSForm
+        schema={osdiFormSchema}
+        onSubmit={this.handleUpdateOrganizationFeatures}
+      >
+        <Form.Field
+          name='osdiApiUrl'
+          label='OSDI API URL'
+          fullWidth
+        />
+        <Form.Field
+          label='OSDI API Token'
+          name='osdiApiToken'
+          fullWidth
+        />
+        <div>
+          Previously-entered URL and token values are not displayed here for security reasons.
+        </div>
+        <Form.Button
+          type='submit'
+          style={inlineStyles.dialogButton}
+          component={GSSubmitButton}
+          label='Save'
+        />
+      </GSForm>
+    )
+  }
 
   renderTextingHoursForm() {
     const { organization } = this.props.data
@@ -114,6 +152,7 @@ class Settings extends React.Component {
 
   render() {
     const { organization } = this.props.data
+
     return (
       <div>
         <Card>
@@ -121,14 +160,30 @@ class Settings extends React.Component {
             title='Settings'
           />
           <CardText>
+            {/*
+              TODO figure out the logic for conditionally rendering these options. See discussion on https://github.com/MoveOnOrg/Spoke/issues/597
+            */}
             <div className={css(styles.section)}>
               <span className={css(styles.sectionLabel)}>
+                OSDI Integration {organization.osdiEnabled}
+              </span>
+              <Toggle
+                toggled={organization.osdiEnabled}
+                label='Use OSDI integrations?'
+                onToggle={async (event, isToggled) => await this.handleUpdateOrganizationFeatures({ osdiEnabled: isToggled })}
+              />
+              {organization.osdiEnabled && this.renderOSDIOptionsForm()}
+            </div>
+            <div className={css(styles.section)}>
+              <span className={css(styles.sectionLabel)}>
+                Texting Hours
               </span>
               <Toggle
                 toggled={organization.textingHoursEnforced}
                 label='Enforce texting hours?'
                 onToggle={async (event, isToggled) => await this.props.mutations.updateTextingHoursEnforcement(isToggled)}
               />
+
             </div>
 
             {organization.textingHoursEnforced ? (
@@ -138,9 +193,9 @@ class Settings extends React.Component {
                 </span>
                 <span className={css(styles.textingHoursSpan)}>
                   {formatTextingHours(organization.textingHoursStart)} to {formatTextingHours(organization.textingHoursEnd)}</span>
-                  {window.TZ ? (
+                {window.TZ ? (
                     ` in your organisations local time. Timezone ${window.TZ}`
-                  ) : ' in contacts local time (or 12pm-6pm EST if timezone is unknown)'}
+                ) : ' in contacts local time (or 12pm-6pm EST if timezone is unknown)'}
               </div>
             ) : ''}
           </CardText>
@@ -199,6 +254,19 @@ const mapMutationsToProps = ({ ownProps }) => ({
       organizationId: ownProps.params.organizationId,
       textingHoursEnforced
     }
+  }),
+  updateOrganizationFeatures: (updates) => ({
+    mutation: gql`
+      mutation updateOrganizationFeatures($organizationId: String!, $osdiEnabled: Boolean, $osdiApiToken: String, $osdiApiUrl: String) {
+        updateOrganizationFeatures(organizationId: $organizationId, osdiEnabled: $osdiEnabled, osdiApiToken: $osdiApiToken, osdiApiUrl: $osdiApiUrl) {
+          id
+          osdiEnabled
+        }
+      }`,
+    variables: {
+      organizationId: ownProps.params.organizationId,
+      ...updates
+    }
   })
 })
 
@@ -211,6 +279,7 @@ const mapQueriesToProps = ({ ownProps }) => ({
         textingHoursEnforced
         textingHoursStart
         textingHoursEnd
+        osdiEnabled
       }
     }`,
     variables: {
