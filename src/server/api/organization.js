@@ -1,27 +1,9 @@
 import { mapFieldsToModel } from './lib/utils'
 import { r, Organization } from '../models'
 import { accessRequired, hasOsdiConfigured } from './errors'
+import { buildCampaignQuery } from './campaign'
+import { buildUserOrganizationQuery } from './user'
 import axios from 'axios'
-
-export const schema = `
-  type Organization {
-    id: ID
-    uuid: String
-    name: String
-    campaigns(campaignsFilter: CampaignsFilter): [Campaign]
-    people(role: String): [User]
-    optOuts: [OptOut]
-    threeClickEnabled: Boolean
-    textingHoursEnforced: Boolean
-    textingHoursStart: Int
-    textingHoursEnd: Int
-    osdiLists(osdiListsFilter: OsdiListFilter): [OsdiList]
-    osdiQuestions: [String]
-    osdiEnabled: Boolean
-    osdiApiToken: String
-    osdiApiUrl: String
-  }
-`
 
 export const resolvers = {
   Organization: {
@@ -31,38 +13,13 @@ export const resolvers = {
     ], Organization),
     campaigns: async (organization, { campaignsFilter }, { user }) => {
       await accessRequired(user, organization.id, 'SUPERVOLUNTEER')
-      let query = r.table('campaign').getAll(organization.id, { index:
-        'organization_id' })
-
-      if (campaignsFilter && campaignsFilter.hasOwnProperty('isArchived') && campaignsFilter.isArchived !== null) {
-        query = query.filter({ is_archived: campaignsFilter.isArchived })
-      }
-      if (campaignsFilter && campaignsFilter.hasOwnProperty('campaignId') && campaignsFilter.campaignId !== null) {
-        query = query.filter({ id: parseInt(campaignsFilter.campaignId)})
-      }
-
-      query = query.orderBy(r.desc('due_by'))
-
+      let query = buildCampaignQuery(
+        r.knex.select('*'),
+        organization.id,
+        campaignsFilter
+      )
+      query = query.orderBy('due_by', 'desc')
       return query
-    },
-    osdiLists: async (organization, { osdiListFilter }, { user }) => {
-      // This is probably not working, since I took it apart to write the osdiQuestions function
-      await hasOsdiConfigured(organization)
-      const {osdiApiUrl, osdiApiToken} = organization.features
-      const client = await osdi.client(organization.features.osdiApiUrl)
-      // const client = await osdi.client(organization.features.osdiApiUrl).set('OSDI-API-Token', organization.features.osdiApiToken)
-
-      let lists = []
-      let res = client.parse(await client.getLists())
-
-      lists = lists.contact(res.lists)
-
-      while (res.nextPage) {
-        res = client.parse(await res.nextPage())
-        lists = lists.contact(res.lists)
-      }
-
-      return lists
     },
     osdiQuestions: async (organization, args, context, info) => {
       // TODO pagination!
@@ -95,14 +52,7 @@ export const resolvers = {
     },
     people: async (organization, { role }, { user }) => {
       await accessRequired(user, organization.id, 'SUPERVOLUNTEER')
-
-      const roleFilter = role ? { role } : {}
-
-      return r.table('user_organization')
-        .getAll(organization.id, { index: 'organization_id' })
-        .filter(roleFilter)
-        .eqJoin('user_id', r.table('user'))('right')
-        .distinct()
+      return buildUserOrganizationQuery(r.knex.select('user.*'), organization.id, role)
     },
     threeClickEnabled: (organization) => organization.features.indexOf('threeClick') !== -1,
     textingHoursEnforced: (organization) => organization.texting_hours_enforced,

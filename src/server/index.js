@@ -1,10 +1,16 @@
+// configure env vars in dev and test environments
+if (['development', 'test'].includes(process.env.NODE_ENV)) {
+  // eslint-disable-next-line global-require
+  require('dotenv').config()
+}
 import 'babel-polyfill'
 import bodyParser from 'body-parser'
 import express from 'express'
 import appRenderer from './middleware/app-renderer'
 import { graphqlExpress, graphiqlExpress } from 'apollo-server-express'
 import { makeExecutableSchema, addMockFunctionsToSchema } from 'graphql-tools'
-import { schema, resolvers } from './api/schema'
+import { resolvers } from './api/schema'
+import { schema } from '../api/schema'
 import { accessRequired } from './api/errors'
 import mocks from './api/mocks'
 import { createLoaders } from './models'
